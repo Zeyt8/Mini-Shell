@@ -16,17 +16,25 @@
 #define READ		0
 #define WRITE		1
 
-word_t* currentDir;
-
 /**
  * Internal change-directory command.
  */
 static bool shell_cd(word_t *dir)
 {
-	/* TODO: Execute cd. */
+	/* Execute cd. */
 	if (dir == NULL) {
 		// TODO: change to home
 		return false;
+	} else {
+		int ret = chdir(dir->string);
+		if (ret == 0) {
+			if (dir->next_word != NULL) {
+				shell_cd(dir->next_word);
+			}
+			return true;
+		} else {
+			return false;
+		}
 	}
 
 	return 0;
@@ -39,6 +47,8 @@ static int shell_exit(void)
 {
 	/* Execute exit/quit. */
 	exit(1);
+
+	return SHELL_EXIT;
 }
 
 /**
@@ -55,12 +65,13 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 		return shell_cd(s->params);
 	}
 	else if (strcmp(s->verb->string, "pwd") == 0) {
-		if (currentDir == NULL) {
-			currentDir = (word_t *)malloc(sizeof(word_t));
-			currentDir->string = "/";
+		char cwd[1024];
+		if (getcwd(cwd, sizeof(cwd)) != NULL) {
+			printf("%s\n", cwd);
+			return 0;
+		} else {
+			return 1;
 		}
-		printf("%s\n", currentDir->string);
-		return 0;
 	}
 	else if (strcmp(s->verb->string, "exit") == 0 || strcmp(s->verb->string, "quit") == 0) {
 		return shell_exit();
@@ -86,7 +97,7 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 			close(fd);
 		}
 		if (s->out != NULL) {
-			int fd = open(s->out->string, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+			int fd = open(s->out->string, s->io_flags, 0644);
 			dup2(fd, STDOUT_FILENO);
 			close(fd);
 		}
