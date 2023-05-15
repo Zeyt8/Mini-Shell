@@ -60,11 +60,14 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 	/* Sanity checks. */
 	if (s == NULL)
 		return SHELL_EXIT;
+	char* command = get_word(s->verb);
+	int size;
+	char** params = get_argv(s, &size);
 	/* If builtin command, execute the command. */
-	if (strcmp(s->verb->string, "cd") == 0) {
+	if (strcmp(command, "cd") == 0) {
 		return shell_cd(s->params);
 	}
-	else if (strcmp(s->verb->string, "pwd") == 0) {
+	else if (strcmp(command, "pwd") == 0) {
 		char cwd[1024];
 		if (getcwd(cwd, sizeof(cwd)) != NULL) {
 			printf("%s\n", cwd);
@@ -73,7 +76,7 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 			return 1;
 		}
 	}
-	else if (strcmp(s->verb->string, "exit") == 0 || strcmp(s->verb->string, "quit") == 0) {
+	else if (strcmp(command, "exit") == 0 || strcmp(command, "quit") == 0) {
 		return shell_exit();
 	}
 	/* TODO: If variable assignment, execute the assignment and return
@@ -92,17 +95,19 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 		// child
 		// redirect
 		if (s->in != NULL) {
-			int fd = open(s->in->string, O_RDONLY);
+			char* in = get_word(s->in);
+			int fd = open(in, O_RDONLY);
 			dup2(fd, STDIN_FILENO);
 			close(fd);
 		}
 		if (s->out != NULL) {
-			int fd = open(s->out->string, s->io_flags, 0644);
+			char* out = get_word(s->out);
+			int fd = open(out, s->io_flags, 0644);
 			dup2(fd, STDOUT_FILENO);
 			close(fd);
 		}
 		// execute
-		execvp(s->verb->string, (char *const *)s->params);
+		execvp(command, params);
 		exit(0);
 	} else {
 		// parent
@@ -186,6 +191,8 @@ int parse_command(command_t *c, int level, command_t *father)
 	case OP_SEQUENTIAL:
 		/* Execute the commands one after the other. */
 		ret = parse_command(c->cmd1, level + 1, c);
+		if (ret < 0)
+			return ret;
 		ret = parse_command(c->cmd2, level + 1, c);
 		break;
 
