@@ -47,7 +47,6 @@ static int shell_exit(void)
 {
 	/* Execute exit/quit. */
 	exit(1);
-
 	return SHELL_EXIT;
 }
 
@@ -65,24 +64,29 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 	char** params = get_argv(s, &size);
 	/* If builtin command, execute the command. */
 	if (strcmp(command, "cd") == 0) {
-		return shell_cd(s->params);
-	}
-	else if (strcmp(command, "pwd") == 0) {
-		char cwd[1024];
-		if (getcwd(cwd, sizeof(cwd)) != NULL) {
-			printf("%s\n", cwd);
-			return 0;
-		} else {
-			return 1;
-		}
+		char* out = get_word(s->out);
+		int saved_stdout = dup(1);
+		int fd = open(out, O_WRONLY | O_CREAT | (s->io_flags == IO_REGULAR ? O_TRUNC : O_APPEND), 0644);
+		dup2(fd, STDOUT_FILENO);
+		close(fd);
+		// print
+		int ret = shell_cd(s->params);
+		// restore stdout
+		dup2(saved_stdout, STDOUT_FILENO);
+		close(saved_stdout);
+		return ret;
 	}
 	else if (strcmp(command, "exit") == 0 || strcmp(command, "quit") == 0) {
 		return shell_exit();
 	}
-	/* TODO: If variable assignment, execute the assignment and return
+	/* If variable assignment, execute the assignment and return
 	 * the exit status.
 	 */
-
+	if (s->verb->next_part != NULL) {
+		if (strcmp(s->verb->next_part->string, "=") == 0) {
+			putenv(get_word(s->verb));
+		}
+	}
 	/* If external command:
 	 *   1. Fork new process
 	 *     2c. Perform redirections in child
@@ -91,7 +95,10 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 	 *   3. Return exit status
 	 */
 	int pid = fork();
-	if (pid == 0) {
+	if (pid < 0) {
+		return SHELL_EXIT;
+	}
+	else if (pid == 0) {
 		// child
 		// redirect
 		if (s->in != NULL) {
@@ -102,12 +109,29 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 		}
 		if (s->out != NULL) {
 			char* out = get_word(s->out);
-			int fd = open(out, s->io_flags, 0644);
+			int fd = open(out, O_WRONLY | O_CREAT | (s->io_flags == IO_REGULAR ? O_TRUNC : O_APPEND), 0644);
 			dup2(fd, STDOUT_FILENO);
 			close(fd);
 		}
+		if (s->err != NULL) {
+			char* err = get_word(s->err);
+			int fd = open(err, O_WRONLY | O_CREAT | (s->io_flags == IO_REGULAR ? O_TRUNC : O_APPEND), 0644);
+			dup2(fd, STDERR_FILENO);
+			close(fd);
+		}
 		// execute
-		execvp(command, params);
+		if (strcmp(command, "pwd") == 0) {
+			char cwd[1024];
+			if (getcwd(cwd, sizeof(cwd)) != NULL) {
+				// print
+				printf("%s\n", cwd);
+			} else {
+				exit(0);
+			}
+		}
+		else {
+			execvp(command, params);
+		}
 		exit(0);
 	} else {
 		// parent
