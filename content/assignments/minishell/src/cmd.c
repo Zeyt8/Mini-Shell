@@ -25,12 +25,14 @@ static bool shell_cd(word_t *dir)
 	char *path = get_word(dir);
 	int ret = false;
 	if (dir == NULL) {
+		// if no argument, change to home directory
 		char *home = getenv("HOME");
 		if (home != NULL) {
 			ret = chdir(home);
 			free(home);
 		}
 	} else if (strcmp(path, "-") == 0) {
+		// if argument is -, change to previous directory
 		char *oldpwd = getenv("OLDPWD");
 		if (oldpwd != NULL) {
 			ret = chdir(oldpwd);
@@ -55,19 +57,21 @@ static int shell_exit(void)
 
 static void redirect(simple_command_t *s)
 {
-	if (s->in != NULL) {
-		word_t* in = s->in;
-		while (in != NULL) {
-			char* inf = get_word(in);
-			int fd = open(inf, O_RDONLY);
-			free(inf);
-			dup2(fd, STDIN_FILENO);
-			close(fd);
-			in = in->next_word;
-		}
+	// go through all the in redirections sequentialy
+	word_t* in = s->in;
+	while (in != NULL) {
+		char* inf = get_word(in);
+		int fd = open(inf, O_RDONLY);
+		free(inf);
+		dup2(fd, STDIN_FILENO);
+		close(fd);
+		in = in->next_word;
 	}
+
 	int last_fd = -1;
 	char *last_path = NULL;
+	// go through all the out redirections sequentialy
+	// keep the last file descriptor and its path
 	word_t* out = s->out;
 	while (out != NULL) {
 		char* outf = get_word(out);
@@ -82,6 +86,10 @@ static void redirect(simple_command_t *s)
 		}
 		out = out->next_word;
 	}
+	// go through all the err redirections sequentialy
+	// if the path is the same as the last out redirection, use the last file descriptor
+	// this prevents overriding
+	// if the path is different, open a new file descriptor
 	word_t* err = s->err;
 	while (err != NULL) {
 		char* errf = get_word(err);
@@ -113,13 +121,14 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 	char* command = get_word(s->verb);
 	/* If builtin command, execute the command. */
 	if (strcmp(command, "cd") == 0) {
+		// perform redirects
 		int saved_stdin = dup(0);
 		int saved_stdout = dup(1);
 		int saved_stderr = dup(2);
 		redirect(s);
 		// print
 		bool ret = shell_cd(s->params);
-		// restore
+		// restore standard io
 		dup2(saved_stdin, STDIN_FILENO);
 		dup2(saved_stdout, STDOUT_FILENO);
 		dup2(saved_stderr, STDERR_FILENO);
@@ -137,6 +146,8 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 	 */
 	if (s->verb->next_part != NULL) {
 		if (strcmp(s->verb->next_part->string, "=") == 0) {
+			// if the command is a variable assignment set it
+			// I check that by checking if the second part is =
 			free(command);
 			return putenv(get_word(s->verb));
 		}
@@ -198,22 +209,23 @@ static bool run_in_parallel(command_t *cmd1, command_t *cmd2, int level,
 	int pid = fork();
 	int ret;
 	if (pid == 0) {
-		// child
+		// child 1
 		ret = parse_command(cmd1, level + 1, father);
 		exit(ret);
 	} else if (pid > 0) {
-		// parent
 		int pid2 = fork(); 
 		if (pid2 == 0) {
-			// child
+			// child 2
 			ret = parse_command(cmd2, level + 1, father);
 			exit(ret);
 		} else if (pid2 > 0) {
 			// parent
+			// wait for both children
 			int status;
 			int status2;
 			waitpid(pid, &status, 0);
 			waitpid(pid2, &status2, 0);
+			// if one of them failed return false
 			if (WEXITSTATUS(status) != 0 || WEXITSTATUS(status2) != 0) {
 				return false;
 			}
@@ -240,17 +252,16 @@ static bool run_on_pipe(command_t *cmd1, command_t *cmd2, int level,
 	}
 	int pid = fork();
 	if (pid == 0) {
-		// child
+		// child 1
 		close(fd[READ]);
 		dup2(fd[WRITE], STDOUT_FILENO);
 		close(fd[WRITE]);
 		ret = parse_command(cmd1, level + 1, father);
 		exit(ret);
 	} else if (pid > 0) {
-		// parent
 		int pid2 = fork();
 		if (pid2 == 0) {
-			// child
+			// child 2
 			close(fd[WRITE]);
 			dup2(fd[READ], STDIN_FILENO);
 			close(fd[READ]);
@@ -260,6 +271,8 @@ static bool run_on_pipe(command_t *cmd1, command_t *cmd2, int level,
 			// parent
 			close(fd[READ]);
 			close(fd[WRITE]);
+			// wait for both children
+			// only check errors for the second one
 			int status;
 			waitpid(pid, &status, 0);
 			waitpid(pid2, &status, 0);
