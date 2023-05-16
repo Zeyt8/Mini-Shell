@@ -26,17 +26,17 @@ static bool shell_cd(word_t *dir)
 	if (dir == NULL) {
 		char *home = getenv("HOME");
 		if (home == NULL) {
-			return SHELL_EXIT;
+			return false;
 		}
-		return chdir(home);
+		return chdir(home) < 0 ? false : true;
 	} else if (strcmp(path, "-") == 0) {
 		char *oldpwd = getenv("OLDPWD");
 		if (oldpwd == NULL) {
-			return SHELL_EXIT;
+			return false;
 		}
-		return chdir(oldpwd);
+		return chdir(oldpwd) < 0 ? false : true;
 	} else {
-		return chdir(path);
+		return chdir(path) < 0 ? false : true;
 	}
 }
 
@@ -101,7 +101,7 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 		close(saved_stdin);
 		close(saved_stdout);
 		close(saved_stderr);
-		return ret;
+		return ret == true ? 0 : ret;
 	} else if (strcmp(command, "exit") == 0 || strcmp(command, "quit") == 0) {
 		return shell_exit();
 	}
@@ -171,7 +171,7 @@ static bool run_in_parallel(command_t *cmd1, command_t *cmd2, int level,
 	} else {
 		return false;
 	}
-	return ret;
+	return ret < 0 ? false : true;
 }
 
 /**
@@ -204,7 +204,7 @@ static bool run_on_pipe(command_t *cmd1, command_t *cmd2, int level,
 		return false;
 	}
 
-	return ret;
+	return ret < 0 ? false : true;
 }
 
 /**
