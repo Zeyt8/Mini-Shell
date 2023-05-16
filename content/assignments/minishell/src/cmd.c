@@ -72,6 +72,7 @@ static void redirect(simple_command_t *s)
 	char *last_path = NULL;
 	// go through all the out redirections sequentialy
 	// keep the last file descriptor and its path
+	// we use realpath to get the absolute path, here and during the check in err redirections
 	word_t* out = s->out;
 	while (out != NULL) {
 		char* outf = get_word(out);
@@ -79,11 +80,11 @@ static void redirect(simple_command_t *s)
 		last_fd = fd;
 		dup2(fd, STDOUT_FILENO);
 		if (out->next_word == NULL) {
-			last_path = outf;
+			last_path = realpath(outf, NULL);
 		} else {
-			free(outf);
 			close(fd);
 		}
+		free(outf);
 		out = out->next_word;
 	}
 	// go through all the err redirections sequentialy
@@ -93,12 +94,15 @@ static void redirect(simple_command_t *s)
 	word_t* err = s->err;
 	while (err != NULL) {
 		char* errf = get_word(err);
-		if (last_fd != -1 && strcmp(last_path, errf) == 0) {
+		char* real_errf = realpath(errf, NULL);
+		if (real_errf != NULL && last_fd != -1 && strcmp(last_path, real_errf) == 0) {
 			free(errf);
+			free(real_errf);
 			dup2(last_fd, STDERR_FILENO);
 			err = err->next_word;
 			continue;
 		}
+		free(real_errf);
 		int fd = open(errf, O_WRONLY | O_CREAT | (s->io_flags == IO_REGULAR ? O_TRUNC : O_APPEND), 0644);
 		free(errf);
 		dup2(fd, STDERR_FILENO);
