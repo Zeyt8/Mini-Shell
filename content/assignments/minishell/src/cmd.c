@@ -93,7 +93,7 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 		int saved_stderr = dup(2);
 		redirect(s);
 		// print
-		int ret = shell_cd(s->params);
+		bool ret = shell_cd(s->params);
 		// restore
 		dup2(saved_stdin, STDIN_FILENO);
 		dup2(saved_stdout, STDOUT_FILENO);
@@ -101,7 +101,7 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 		close(saved_stdin);
 		close(saved_stdout);
 		close(saved_stderr);
-		return ret == true ? 0 : ret;
+		return ret == true ? 0 : 1;
 	} else if (strcmp(command, "exit") == 0 || strcmp(command, "quit") == 0) {
 		return shell_exit();
 	}
@@ -160,18 +160,29 @@ static bool run_in_parallel(command_t *cmd1, command_t *cmd2, int level,
 {
 	/* Execute cmd1 and cmd2 simultaneously. */
 	int pid = fork();
-	int ret = 0;
 	if (pid == 0) {
 		// child
-		ret = parse_command(cmd1, level + 1, father);
+		parse_command(cmd1, level + 1, father);
 		exit(1);
 	} else if (pid > 0) {
 		// parent
-		ret = parse_command(cmd2, level + 1, father);
+		int pid2 = fork();
+		if (pid2 == 0) {
+			// child
+			parse_command(cmd2, level + 1, father);
+			exit(1);
+		} else if (pid2 > 0) {
+			// parent
+			int status;
+			waitpid(pid, &status, 0);
+			waitpid(pid2, &status, 0);
+		} else {
+			return false;
+		}
 	} else {
 		return false;
 	}
-	return ret < 0 ? false : true;
+	return true;
 }
 
 /**
@@ -192,19 +203,33 @@ static bool run_on_pipe(command_t *cmd1, command_t *cmd2, int level,
 		close(fd[READ]);
 		dup2(fd[WRITE], STDOUT_FILENO);
 		close(fd[WRITE]);
-		ret = parse_command(cmd1, level + 1, father);
+		parse_command(cmd1, level + 1, father);
 		exit(0);
 	} else if (pid > 0) {
 		// parent
-		close(fd[WRITE]);
-		dup2(fd[READ], STDIN_FILENO);
-		close(fd[READ]);
-		ret = parse_command(cmd2, level + 1, father);
+		int pid2 = fork();
+		if (pid2 == 0) {
+			// child
+			close(fd[WRITE]);
+			dup2(fd[READ], STDIN_FILENO);
+			close(fd[READ]);
+			parse_command(cmd2, level + 1, father);
+			exit(0);
+		} else if (pid2 > 0) {
+			// parent
+			close(fd[READ]);
+			close(fd[WRITE]);
+			int status;
+			waitpid(pid, &status, 0);
+			waitpid(pid2, &status, 0);
+		} else {
+			return false;
+		}
 	} else {
 		return false;
 	}
 
-	return ret < 0 ? false : true;
+	return true;
 }
 
 /**
