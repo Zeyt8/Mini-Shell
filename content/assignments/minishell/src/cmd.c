@@ -22,22 +22,22 @@
 static bool shell_cd(word_t *dir)
 {
 	/* Execute cd. */
+	char *path = get_word(dir);
 	if (dir == NULL) {
-		// TODO: change to home
-		return false;
-	} else {
-		int ret = chdir(dir->string);
-		if (ret == 0) {
-			if (dir->next_word != NULL) {
-				shell_cd(dir->next_word);
-			}
-			return true;
-		} else {
-			return false;
+		char *home = getenv("HOME");
+		if (home == NULL) {
+			return SHELL_EXIT;
 		}
+		return chdir(home);
+	} else if (strcmp(path, "-") == 0) {
+		char *oldpwd = getenv("OLDPWD");
+		if (oldpwd == NULL) {
+			return SHELL_EXIT;
+		}
+		return chdir(oldpwd);
+	} else {
+		return chdir(path);
 	}
-
-	return 0;
 }
 
 /**
@@ -46,8 +46,32 @@ static bool shell_cd(word_t *dir)
 static int shell_exit(void)
 {
 	/* Execute exit/quit. */
-	exit(1);
+	exit(0);
 	return SHELL_EXIT;
+}
+
+static void redirect(simple_command_t *s)
+{
+	if (s->in != NULL) {
+		char* in = get_word(s->in);
+		int fd = open(in, O_RDONLY);
+		dup2(fd, STDIN_FILENO);
+		close(fd);
+	}
+	if (s->out != NULL) {
+		char* out = get_word(s->out);
+		int fd = open(out, O_WRONLY | O_CREAT | (s->io_flags == IO_REGULAR ? O_TRUNC : O_APPEND), 0644);
+		dup2(fd, STDOUT_FILENO);
+		if (s->err != NULL) {
+			dup2(fd, STDERR_FILENO);
+		}
+		close(fd);
+	} else if (s->err != NULL) {
+		char* err = get_word(s->err);
+		int fd = open(err, O_WRONLY | O_CREAT | (s->io_flags == IO_REGULAR ? O_TRUNC : O_APPEND), 0644);
+		dup2(fd, STDERR_FILENO);
+		close(fd);
+	}
 }
 
 /**
@@ -64,19 +88,21 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 	char** params = get_argv(s, &size);
 	/* If builtin command, execute the command. */
 	if (strcmp(command, "cd") == 0) {
-		char* out = get_word(s->out);
+		int saved_stdin = dup(0);
 		int saved_stdout = dup(1);
-		int fd = open(out, O_WRONLY | O_CREAT | (s->io_flags == IO_REGULAR ? O_TRUNC : O_APPEND), 0644);
-		dup2(fd, STDOUT_FILENO);
-		close(fd);
+		int saved_stderr = dup(2);
+		redirect(s);
 		// print
 		int ret = shell_cd(s->params);
-		// restore stdout
+		// restore
+		dup2(saved_stdin, STDIN_FILENO);
 		dup2(saved_stdout, STDOUT_FILENO);
+		dup2(saved_stderr, STDERR_FILENO);
+		close(saved_stdin);
 		close(saved_stdout);
+		close(saved_stderr);
 		return ret;
-	}
-	else if (strcmp(command, "exit") == 0 || strcmp(command, "quit") == 0) {
+	} else if (strcmp(command, "exit") == 0 || strcmp(command, "quit") == 0) {
 		return shell_exit();
 	}
 	/* If variable assignment, execute the assignment and return
@@ -97,28 +123,10 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 	int pid = fork();
 	if (pid < 0) {
 		return SHELL_EXIT;
-	}
-	else if (pid == 0) {
+	} else if (pid == 0) {
 		// child
 		// redirect
-		if (s->in != NULL) {
-			char* in = get_word(s->in);
-			int fd = open(in, O_RDONLY);
-			dup2(fd, STDIN_FILENO);
-			close(fd);
-		}
-		if (s->out != NULL) {
-			char* out = get_word(s->out);
-			int fd = open(out, O_WRONLY | O_CREAT | (s->io_flags == IO_REGULAR ? O_TRUNC : O_APPEND), 0644);
-			dup2(fd, STDOUT_FILENO);
-			close(fd);
-		}
-		if (s->err != NULL) {
-			char* err = get_word(s->err);
-			int fd = open(err, O_WRONLY | O_CREAT | (s->io_flags == IO_REGULAR ? O_TRUNC : O_APPEND), 0644);
-			dup2(fd, STDERR_FILENO);
-			close(fd);
-		}
+		redirect(s);
 		// execute
 		if (strcmp(command, "pwd") == 0) {
 			char cwd[1024];
@@ -128,9 +136,12 @@ static int parse_simple(simple_command_t *s, int level, command_t *father)
 			} else {
 				exit(0);
 			}
-		}
-		else {
-			execvp(command, params);
+		} else {
+			int ret = execvp(command, params);
+			if (ret == -1) {
+				printf("Execution failed for '%s'\n", command);
+				exit(SHELL_EXIT);
+			}
 		}
 		exit(0);
 	} else {
@@ -215,8 +226,6 @@ int parse_command(command_t *c, int level, command_t *father)
 	case OP_SEQUENTIAL:
 		/* Execute the commands one after the other. */
 		ret = parse_command(c->cmd1, level + 1, c);
-		if (ret < 0)
-			return ret;
 		ret = parse_command(c->cmd2, level + 1, c);
 		break;
 
