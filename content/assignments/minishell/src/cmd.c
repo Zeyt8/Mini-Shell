@@ -56,28 +56,49 @@ static int shell_exit(void)
 static void redirect(simple_command_t *s)
 {
 	if (s->in != NULL) {
-		char* in = get_word(s->in);
-		int fd = open(in, O_RDONLY);
-		free(in);
-		dup2(fd, STDIN_FILENO);
-		close(fd);
-	}
-	if (s->out != NULL) {
-		char* out = get_word(s->out);
-		int fd = open(out, O_WRONLY | O_CREAT | (s->io_flags == IO_REGULAR ? O_TRUNC : O_APPEND), 0644);
-		free(out);
-		dup2(fd, STDOUT_FILENO);
-		if (s->err != NULL) {
-			dup2(fd, STDERR_FILENO);
+		word_t* in = s->in;
+		while (in != NULL) {
+			char* inf = get_word(in);
+			int fd = open(inf, O_RDONLY);
+			free(inf);
+			dup2(fd, STDIN_FILENO);
+			close(fd);
+			in = in->next_word;
 		}
-		close(fd);
-	} else if (s->err != NULL) {
-		char* err = get_word(s->err);
-		int fd = open(err, O_WRONLY | O_CREAT | (s->io_flags == IO_REGULAR ? O_TRUNC : O_APPEND), 0644);
-		free(err);
+	}
+	int last_fd = -1;
+	char *last_path = NULL;
+	word_t* out = s->out;
+	while (out != NULL) {
+		char* outf = get_word(out);
+		int fd = open(outf, O_WRONLY | O_CREAT | (s->io_flags == IO_REGULAR ? O_TRUNC : O_APPEND), 0644);
+		last_fd = fd;
+		dup2(fd, STDOUT_FILENO);
+		if (out->next_word == NULL) {
+			last_path = outf;
+		} else {
+			free(outf);
+			close(fd);
+		}
+		out = out->next_word;
+	}
+	word_t* err = s->err;
+	while (err != NULL) {
+		char* errf = get_word(err);
+		if (last_fd != -1 && strcmp(last_path, errf) == 0) {
+			free(errf);
+			dup2(last_fd, STDERR_FILENO);
+			err = err->next_word;
+			continue;
+		}
+		int fd = open(errf, O_WRONLY | O_CREAT | (s->io_flags == IO_REGULAR ? O_TRUNC : O_APPEND), 0644);
+		free(errf);
 		dup2(fd, STDERR_FILENO);
 		close(fd);
+		err = err->next_word;
 	}
+	free(last_path);
+	close(last_fd);
 }
 
 /**
