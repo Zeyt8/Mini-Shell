@@ -280,7 +280,7 @@ static bool run_on_pipe(command_t *cmd1, command_t *cmd2, int level,
 		exit(ret);
 	} else if (pid > 0) {
 		int pid2 = fork();
-		
+
 		if (pid2 == 0) {
 			// child 2
 			close(fd[WRITE]);
